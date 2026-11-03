@@ -5,7 +5,7 @@ const socket = io({ transports: ['websocket', 'polling'] });
 let state = null, error = '';
 const act = (type, extra) => socket.emit('host:action', { type, ...extra }, (r) => { error = r.ok ? '' : r.error; render(); });
 const NEXT = {
-  lobby: ['start', 'Começar jogo'], question: ['lock', 'Fechar respostas'], locked: ['reveal', 'Mostrar resposta certa'],
+  lobby: ['start', 'Começar jogo'], question: ['lock', 'Terminar pergunta agora'],
   reveal: ['leaderboard', 'Mostrar classificação'],
 };
 function render() {

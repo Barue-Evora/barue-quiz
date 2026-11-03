@@ -19,7 +19,7 @@ function question() {
     h('div', { class: 'sopts' }, state.question.options.map((t, i) =>
       h('div', { class: `opt${i} ${revealed && i !== state.correct ? 'wrong' : ''}` }, h('span', { class: 'letter' }, LETTERS[i]), h('span', null, t),
         revealed ? h('span', { class: 'n' }, String(state.counts[i])) : null))));
-  if (state.phase === 'locked') timer.textContent = 'Tempo!';
+  if (revealed) timer.textContent = 'Tempo!';
   countdown(state, (left) => { timer.textContent = Math.ceil(left / 1000) + 's'; });
 }
 function board(title) {
@@ -29,7 +29,7 @@ function board(title) {
 }
 function render() {
   if (state.phase === 'lobby') lobby();
-  else if (['question', 'locked', 'reveal'].includes(state.phase)) question();
+  else if (['question', 'reveal'].includes(state.phase)) question();
   else board(state.phase === 'finished' ? 'Classificação final' : 'Classificação');
 }
 socket.on('connect', () => socket.emit('hello', { role: 'screen', code }, (r) => {

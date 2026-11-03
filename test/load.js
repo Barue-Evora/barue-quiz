@@ -76,7 +76,6 @@ const conn = () => new Promise((res) => { const s = io(URL, { transports: ['webs
     check(results.filter(Boolean).length === TEAMS, `question ${q + 1}: all 50 answers accepted`);
     if (q === 0) check(!teams[5].double.ok, 'second answer from one team refused');
     await sleep(350);
-    await call(host, 'host:action', { type: 'reveal' });
     await sleep(250);
     const before = teams.map((t) => t.latest);
     check(before.every((st) => st.phase === 'reveal' && st.correct === correct), `question ${q + 1}: every phone saw the reveal`);

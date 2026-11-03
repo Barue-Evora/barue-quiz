@@ -52,12 +52,12 @@ function render() {
   switch (state.phase) {
     case 'lobby': return message('Estás dentro!', 'Fica atento ao ecrã. O jogo vai começar.');
     case 'question': return questionView();
-    case 'locked': return message(state.myChoice != null ? 'Resposta fechada' : 'Tempo esgotado', 'Vê a resposta certa no ecrã.');
     case 'reveal': {
-      if (state.myChoice == null) return message('Sem resposta', 'Certa: ' + state.question.options[state.correct]);
+      const right = 'Resposta certa: ' + state.question.options[state.correct];
+      if (state.myChoice == null) return message('Sem resposta', '0 pontos. ' + right);
       return state.lastPoints
-        ? message('Certo! +' + fmt(state.lastPoints), `Estás em ${state.team.rank}.º lugar.`)
-        : message('Errado', 'Certa: ' + state.question.options[state.correct]);
+        ? message('Certo! +' + fmt(state.lastPoints) + ' pontos', `Estás em ${state.team.rank}.º lugar.`)
+        : message('Errado', '0 pontos. ' + right);
     }
     case 'leaderboard': return message(`${state.team.rank}.º lugar`, fmt(state.team.score) + ' pontos');
     case 'finished': return message(`Terminaste em ${state.team.rank}.º`, fmt(state.team.score) + ' pontos. Obrigado por jogares!');

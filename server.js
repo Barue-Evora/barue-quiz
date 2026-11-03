@@ -71,9 +71,10 @@ function restore() {
     for (const g of JSON.parse(fs.readFileSync(SNAPSHOT_FILE, 'utf8'))) {
       if (Date.now() - g.createdAt > GAME_TTL_MS) continue;
       games.set(g.code, g);
-      if (g.phase === 'question') {
+      if (g.phase === 'locked') reveal(g); // snapshots from the earlier version
+      else if (g.phase === 'question') {
         const left = g.endsAt - Date.now();
-        if (left <= 0) g.phase = 'locked';
+        if (left <= 0) reveal(g);
         else timers.set(g.code, setTimeout(() => lock(g), left));
       }
     }
@@ -97,12 +98,13 @@ function ranking(g) {
     return { id: t.id, name: t.name, score: t.score, rank, connected: (socketCounts.get(t.id) || 0) > 0 };
   });
 }
+// Ends the question and shows the result at once: timer ran out, every connected
+// team answered, or the host ended it early.
 function lock(g) {
   if (g.phase !== 'question') return;
   clearTimeout(timers.get(g.code));
-  g.phase = 'locked';
   g.endsAt = null;
-  broadcast(g);
+  reveal(g);
 }
 function reveal(g) {
   const q = currentQuestion(g);
@@ -150,7 +152,7 @@ function answer(g, team, qIndex, choice) {
 // ---------- what each screen may see (the correct answer stays on the server until reveal) ----------
 function publicView(g) {
   const q = currentQuestion(g);
-  const showQ = q && ['question', 'locked', 'reveal'].includes(g.phase);
+  const showQ = q && ['question', 'reveal'].includes(g.phase);
   const revealed = g.phase === 'reveal';
   return {
     code: g.code, phase: g.phase, title: g.quiz.title,
@@ -300,7 +302,6 @@ io.on('connection', (socket) => {
       if (!teamsArray(g).length) return fail(ack, 'Ainda não há equipas.');
       startQuestion(g, 0);
     } else if (type === 'lock' && g.phase === 'question') lock(g);
-    else if (type === 'reveal' && g.phase === 'locked') reveal(g);
     else if (type === 'leaderboard' && g.phase === 'reveal') { g.phase = 'leaderboard'; broadcast(g); }
     else if (type === 'next' && g.phase === 'leaderboard') {
       if (last) { g.phase = 'finished'; broadcast(g); } else startQuestion(g, g.qIndex + 1);

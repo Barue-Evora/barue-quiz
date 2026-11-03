@@ -24,17 +24,22 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await phones[0].click('.answers button:nth-child(2)'); await phones[0].waitForSelector('text=Resposta registada');
   // refresh a phone mid-question: must keep its team and locked answer
   await phones[0].reload(); await phones[0].waitForSelector('text=Resposta registada'); console.log('PASS phone refresh kept team and answer');
-  await host.reload(); await host.waitForSelector('text=Fechar respostas'); console.log('PASS host refresh kept controls');
+  await host.reload(); await host.waitForSelector('text=Terminar pergunta agora'); console.log('PASS host refresh kept controls');
   await phones[1].click('.answers button:nth-child(1)');
   // restart the server mid-question
   await sleep(800); srv.kill(); await sleep(400); srv = start();
   await phones[2].waitForSelector('.answers button:not([disabled])', { timeout: 15000 });
   await sleep(3000);
-  await phones[2].click('.answers button:nth-child(2)'); await host.waitForSelector('text=Mostrar resposta certa', { timeout: 15000 });
+  await phones[2].click('.answers button:nth-child(2)'); await host.waitForSelector('text=Mostrar classificação', { timeout: 15000 });
   console.log('PASS game survived a server restart');
-  await host.click('text=Mostrar resposta certa'); await phones[0].waitForSelector('text=Certo!');
+  await phones[0].waitForSelector('text=Certo!');
   await sleep(300); await screen.screenshot({ path: S + '/5-reveal.png' }); await phones[1].screenshot({ path: S + '/6-phone-wrong.png' });
   await host.click('text=Mostrar classificação'); await sleep(400); await screen.screenshot({ path: S + '/7-board.png' });
+  // nobody answers: the timer alone must end the question and show the result
+  await host.click('text=Próxima pergunta'); await phones[0].waitForSelector('.answers button');
+  await phones[0].waitForSelector('text=Sem resposta', { timeout: 20000 }); await screen.waitForSelector('.wrong');
+  console.log('PASS timer ended the question and showed the result by itself');
+  await phones[0].screenshot({ path: S + '/8-phone-timeout.png' });
   console.log('page errors:', errors.length ? errors : 'none');
   await b.close(); srv.kill(); process.exit(0);
 })().catch((e) => { console.error('FAIL', e.message); process.exit(1); });
