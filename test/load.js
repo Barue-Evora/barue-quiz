@@ -21,7 +21,7 @@ const conn = () => new Promise((res) => { const s = io(URL, { transports: ['webs
   const teams = await Promise.all(Array.from({ length: TEAMS }, async (_, i) => {
     const s = await conn();
     const t = { i, s, name: `Equipa ${i + 1}`, expected: 0, latest: null };
-    s.on('state', (st) => { t.latest = st; t.lastAt = performance.now(); });
+    s.on('state', (st) => { t.latest = st; });
     await call(s, 'hello', { role: 'team', code: g.code });
     const r = await call(s, 'team:join', { name: t.name });
     t.ok = r.ok; t.token = r.token;
@@ -33,32 +33,34 @@ const conn = () => new Promise((res) => { const s = io(URL, { transports: ['webs
   const dup = await call(bad, 'team:join', { name: 'EQUIPA 1' });
   check(!dup.ok, 'duplicate name refused');
 
-  const latencies = []; const leaked = [];
+  const spreads = []; const leaked = [];
+  const waitPhase = (t, ok) => new Promise((res) => {
+    if (t.latest && ok(t.latest)) return res(performance.now());
+    const f = (st) => { if (ok(st)) { t.s.off('state', f); res(performance.now()); } };
+    t.s.on('state', f);
+  });
+  const watch = (t) => t.s.on('state', (st) => {
+    t.latest = st;
+    if (st.phase !== 'reveal' && st.correct != null) leaked.push(t.i);
+  });
+  teams.forEach(watch);
   for (let q = 0; q < quiz.questions.length; q++) {
-    const sent = performance.now();
-    const waiting = teams.map((t) => new Promise((res) => {
-      if (t.latest?.phase === 'question' && t.latest.qIndex === q) return res();
-      const f = (st) => { if (st.phase === 'question' && st.qIndex === q) { t.s.off('state', f); latencies.push(performance.now() - sent); res(); } };
-      t.s.on('state', f);
-    }));
-    const r = await call(host, 'host:action', { type: q === 0 ? 'start' : 'next' });
-    if (!r.ok) check(false, `host could not start question ${q}: ${r.error}`);
-    await Promise.all(waiting);
-    for (const t of teams) if (t.latest.correct != null || JSON.stringify(t.latest).includes('hostCorrect')) leaked.push(t.i);
+    const arrivals = teams.map((t) => waitPhase(t, (st) => st.phase === 'question' && st.qIndex === q));
+    if (q === 0) await call(host, 'host:action', { type: 'start' });
+    const times = await Promise.all(arrivals);
+    spreads.push(Math.max(...times) - Math.min(...times));
 
-    // Question 2: ten phones drop mid-question and come back with their saved token.
     if (q === 1) {
       const dropped = teams.slice(0, 10);
       dropped.forEach((t) => t.s.disconnect());
       await sleep(150);
       await Promise.all(dropped.map(async (t) => {
-        t.s = await conn(); t.s.on('state', (st) => { t.latest = st; });
+        t.s = await conn(); watch(t);
         const r2 = await call(t.s, 'hello', { role: 'team', code: g.code, teamToken: t.token });
         t.rejoined = r2.joined && r2.state.team.name === t.name;
       }));
       check(dropped.every((t) => t.rejoined), '10 dropped teams rejoined as the same team');
     }
-    // Question 3: the host refreshes in the middle of the question.
     if (q === 2) {
       host.disconnect(); host = await conn();
       const r3 = await call(host, 'hello', { role: 'host', code: g.code, hostToken: g.hostToken });
@@ -75,28 +77,27 @@ const conn = () => new Promise((res) => { const s = io(URL, { transports: ['webs
     }));
     check(results.filter(Boolean).length === TEAMS, `question ${q + 1}: all 50 answers accepted`);
     if (q === 0) check(!teams[5].double.ok, 'second answer from one team refused');
-    await sleep(350);
-    await sleep(250);
-    const before = teams.map((t) => t.latest);
-    check(before.every((st) => st.phase === 'reveal' && st.correct === correct), `question ${q + 1}: every phone saw the reveal`);
+    await Promise.all(teams.map((t) => waitPhase(t, (st) => st.phase === 'reveal' && st.qIndex === q)));
+    check(teams.every((t) => t.latest.correct === correct), `question ${q + 1}: showed the result automatically once everyone answered`);
     teams.forEach((t) => {
       const pts = t.latest.lastPoints;
       const right = t.i % 4 !== 0;
       if (right ? !(pts >= 1000 && pts <= 1200) : pts !== 0) check(false, `bad points for ${t.name}: ${pts}`);
       t.expected += pts;
     });
-    await call(host, 'host:action', { type: 'leaderboard' });
-    await sleep(150);
+    if (q === 3) {
+      await call(host, 'host:action', { type: 'pause' });
+      await sleep(Number(process.env.REVEAL_MS) + 300);
+      check(teams.every((t) => t.latest.phase === 'reveal'), 'host pause held the game on the result');
+      await call(host, 'host:action', { type: 'pause' });
+    }
   }
+  await Promise.all(teams.map((t) => waitPhase(t, (st) => st.phase === 'finished')));
   check(leaked.length === 0, 'correct answer never reached phones before reveal');
-  await call(host, 'host:action', { type: 'next' });
-  await sleep(300);
   check(teams.every((t) => t.latest.phase === 'finished' && t.latest.team.score === t.expected), 'final score on every phone matches the sum of its points');
   const ranks = teams.map((t) => t.latest.team.rank);
   check(Math.min(...ranks) === 1, 'a winner exists');
-  latencies.sort((a, b) => a - b);
-  const p = (x) => Math.round(latencies[Math.floor(latencies.length * x)] || 0);
-  console.log(`Question arrival across phones: median ${p(.5)} ms, 95% ${p(.95)} ms, worst ${p(.999)} ms (${latencies.length} deliveries)`);
+  console.log(`Gap between first and last phone getting each question: worst ${Math.round(Math.max(...spreads))} ms`);
   console.log(failures ? `\n${failures} check(s) FAILED` : '\nALL CHECKS PASSED');
   process.exit(failures ? 1 : 0);
 })();

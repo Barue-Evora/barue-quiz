@@ -16,6 +16,10 @@ const MAX_TEAMS = Number(process.env.MAX_TEAMS || 50);
 const BASE_POINTS = 1000;
 const MAX_SPEED_BONUS = 200;
 const GAME_TTL_MS = 12 * 60 * 60 * 1000;
+const SUSPENSE_MS = Number(process.env.SUSPENSE_MS || 3500);
+const REVEAL_MS = Number(process.env.REVEAL_MS || 8000);
+const BOARD_MS = Number(process.env.BOARD_MS || 8000);
+const PODIUM_MS = 10000; // keep in step with the podium animation on the big screen
 
 const app = express();
 app.set('trust proxy', true);
@@ -71,12 +75,12 @@ function restore() {
     for (const g of JSON.parse(fs.readFileSync(SNAPSHOT_FILE, 'utf8'))) {
       if (Date.now() - g.createdAt > GAME_TTL_MS) continue;
       games.set(g.code, g);
-      if (g.phase === 'locked') reveal(g); // snapshots from the earlier version
+      if (g.phase === 'locked' || g.phase === 'suspense') reveal(g);
       else if (g.phase === 'question') {
         const left = g.endsAt - Date.now();
-        if (left <= 0) reveal(g);
+        if (left <= 0) lock(g);
         else timers.set(g.code, setTimeout(() => lock(g), left));
-      }
+      } else scheduleStage(g);
     }
     console.log(`restored ${games.size} game(s)`);
   } catch (e) {
@@ -98,13 +102,47 @@ function ranking(g) {
     return { id: t.id, name: t.name, score: t.score, rank, connected: (socketCounts.get(t.id) || 0) > 0 };
   });
 }
-// Ends the question and shows the result at once: timer ran out, every connected
-// team answered, or the host ended it early.
+// The game runs itself: question -> suspense -> reveal -> leaderboard -> next question.
+// A pause holds the game on the reveal or leaderboard until the host resumes or skips.
+const isLast = (g) => g.qIndex >= g.quiz.questions.length - 1;
+function clearStage(g) {
+  clearTimeout(timers.get(g.code));
+  g.autoAt = null;
+}
+function scheduleStage(g) {
+  clearStage(g);
+  const ms = { suspense: SUSPENSE_MS, reveal: REVEAL_MS, leaderboard: BOARD_MS }[g.phase];
+  if (!ms || (g.paused && g.phase !== 'suspense')) return;
+  g.autoAt = Date.now() + ms;
+  timers.set(g.code, setTimeout(() => advance(g), ms));
+}
+function advance(g) {
+  if (g.phase === 'suspense') return reveal(g);
+  if (g.phase === 'reveal' && isLast(g)) {
+    clearStage(g);
+    g.phase = 'finished';
+    g.finishedAt = Date.now();
+    return broadcast(g);
+  }
+  if (g.phase === 'reveal') {
+    g.phase = 'leaderboard';
+    scheduleStage(g);
+    return broadcast(g);
+  }
+  if (g.phase === 'leaderboard') startQuestion(g, g.qIndex + 1);
+}
+// Timer ran out, every connected team answered, or the host ended the question early.
 function lock(g) {
   if (g.phase !== 'question') return;
-  clearTimeout(timers.get(g.code));
   g.endsAt = null;
-  reveal(g);
+  g.phase = 'suspense';
+  scheduleStage(g);
+  broadcast(g);
+}
+function everyoneAnswered(g) {
+  const connected = connectedTeams(g);
+  const answers = answersFor(g);
+  return g.phase === 'question' && connected.length > 0 && connected.every((t) => answers[t.id]);
 }
 function reveal(g) {
   const q = currentQuestion(g);
@@ -117,6 +155,7 @@ function reveal(g) {
   }
   g.revealCounts = counts;
   g.phase = 'reveal';
+  scheduleStage(g);
   broadcast(g);
 }
 function startQuestion(g, index) {
@@ -127,7 +166,7 @@ function startQuestion(g, index) {
   g.phase = 'question';
   g.startedAt = Date.now();
   g.endsAt = g.startedAt + ms;
-  clearTimeout(timers.get(g.code));
+  clearStage(g);
   timers.set(g.code, setTimeout(() => lock(g), ms));
   broadcast(g);
 }
@@ -143,8 +182,7 @@ function answer(g, team, qIndex, choice) {
     teamId: team.id, choice, timeLeftRatio: (g.endsAt - now) / (g.endsAt - g.startedAt), points: 0,
   };
   saveSoon();
-  const connected = connectedTeams(g);
-  if (connected.length && connected.every((t) => answers[t.id])) lock(g);
+  if (everyoneAnswered(g)) lock(g);
   else progressSoon(g);
   return null;
 }
@@ -152,7 +190,7 @@ function answer(g, team, qIndex, choice) {
 // ---------- what each screen may see (the correct answer stays on the server until reveal) ----------
 function publicView(g) {
   const q = currentQuestion(g);
-  const showQ = q && ['question', 'reveal'].includes(g.phase);
+  const showQ = q && ['question', 'suspense', 'reveal'].includes(g.phase);
   const revealed = g.phase === 'reveal';
   return {
     code: g.code, phase: g.phase, title: g.quiz.title,
@@ -160,6 +198,9 @@ function publicView(g) {
     question: showQ ? { text: q.text, options: q.options } : null,
     remainingMs: g.phase === 'question' ? Math.max(0, g.endsAt - Date.now()) : 0,
     totalMs: g.phase === 'question' ? g.endsAt - g.startedAt : 0,
+    autoMs: g.autoAt ? Math.max(0, g.autoAt - Date.now()) : null,
+    paused: !!g.paused,
+    podiumMs: g.phase === 'finished' ? Math.max(0, g.finishedAt + PODIUM_MS - Date.now()) : 0,
     answered: Object.keys(answersFor(g)).length,
     teamCount: teamsArray(g).length, maxTeams: MAX_TEAMS,
     teams: teamsArray(g).map((t) => t.name),
@@ -297,20 +338,22 @@ io.on('connection', (socket) => {
   socket.on('host:action', ({ type, teamId } = {}, ack) => {
     const g = games.get(socket.data.code);
     if (!g || !socket.data.host) return fail(ack, 'Sem permissão.');
-    const last = g.qIndex >= g.quiz.questions.length - 1;
     if (type === 'start' && g.phase === 'lobby') {
       if (!teamsArray(g).length) return fail(ack, 'Ainda não há equipas.');
       startQuestion(g, 0);
     } else if (type === 'lock' && g.phase === 'question') lock(g);
-    else if (type === 'leaderboard' && g.phase === 'reveal') { g.phase = 'leaderboard'; broadcast(g); }
-    else if (type === 'next' && g.phase === 'leaderboard') {
-      if (last) { g.phase = 'finished'; broadcast(g); } else startQuestion(g, g.qIndex + 1);
+    else if (type === 'skip' && ['reveal', 'leaderboard'].includes(g.phase)) advance(g);
+    else if (type === 'pause' && g.phase !== 'finished') {
+      g.paused = !g.paused;
+      if (['reveal', 'leaderboard'].includes(g.phase)) scheduleStage(g);
+      broadcast(g);
     } else if (type === 'kick' && g.teams[teamId]) {
       io.to(`team:${teamId}`).emit('kicked');
       io.in(`team:${teamId}`).socketsLeave(`team:${teamId}`);
       for (const s of io.of('/').sockets.values()) if (s.data.team === teamId) releaseTeam(s);
       delete g.teams[teamId];
       delete answersFor(g)[teamId];
+      if (everyoneAnswered(g)) lock(g);
       broadcast(g);
     } else return fail(ack, 'Essa ação não está disponível agora.');
     done(ack);
@@ -322,9 +365,7 @@ io.on('connection', (socket) => {
     releaseTeam(socket);
     if (!g || !had) return;
     progressSoon(g);
-    const connected = connectedTeams(g);
-    const answers = answersFor(g);
-    if (g.phase === 'question' && connected.length && connected.every((t) => answers[t.id])) lock(g);
+    if (everyoneAnswered(g)) lock(g);
   });
 });
 

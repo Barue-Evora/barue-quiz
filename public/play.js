@@ -52,15 +52,23 @@ function render() {
   switch (state.phase) {
     case 'lobby': return message('Estás dentro!', 'Fica atento ao ecrã. O jogo vai começar.');
     case 'question': return questionView();
+    case 'suspense': return message('E a resposta certa é…', state.myChoice != null ? 'Resposta guardada. Olha para o ecrã!' : 'Olha para o ecrã!');
     case 'reveal': {
+      const place = state.qIndex + 1 < state.qTotal ? `Estás em ${state.team.rank}.º lugar.` : 'Vê o resultado final no ecrã!';
       const right = 'Resposta certa: ' + state.question.options[state.correct];
       if (state.myChoice == null) return message('Sem resposta', '0 pontos. ' + right);
       return state.lastPoints
-        ? message('Certo! +' + fmt(state.lastPoints) + ' pontos', `Estás em ${state.team.rank}.º lugar.`)
+        ? message('Certo! +' + fmt(state.lastPoints) + ' pontos', place)
         : message('Errado', '0 pontos. ' + right);
     }
     case 'leaderboard': return message(`${state.team.rank}.º lugar`, fmt(state.team.score) + ' pontos');
-    case 'finished': return message(`Terminaste em ${state.team.rank}.º`, fmt(state.team.score) + ' pontos. Obrigado por jogares!');
+    case 'finished':
+      if (state.podiumMs > 0) {
+        clearTimeout(window._pod);
+        window._pod = setTimeout(() => { state.podiumMs = 0; render(); }, state.podiumMs);
+        return message('Pódio!', 'Olha para o ecrã grande…');
+      }
+      return message(`Terminaste em ${state.team.rank}.º`, fmt(state.team.score) + ' pontos. Obrigado por jogares!');
   }
 }
 function hello() {

@@ -6,12 +6,12 @@ let state = null, error = '';
 const act = (type, extra) => socket.emit('host:action', { type, ...extra }, (r) => { error = r.ok ? '' : r.error; render(); });
 const NEXT = {
   lobby: ['start', 'Começar jogo'], question: ['lock', 'Terminar pergunta agora'],
-  reveal: ['leaderboard', 'Mostrar classificação'],
+  reveal: ['skip', 'Avançar agora'], leaderboard: ['skip', 'Avançar agora'],
 };
 function render() {
   if (!state) return;
-  const last = state.qIndex >= state.qTotal - 1;
-  const step = state.phase === 'leaderboard' ? ['next', last ? 'Terminar jogo' : 'Próxima pergunta'] : NEXT[state.phase];
+  const step = NEXT[state.phase];
+  const showPause = !['lobby', 'finished'].includes(state.phase);
   const qCard = state.question ? h('div', { class: 'card' },
     h('div', { class: 'muted' }, `Pergunta ${state.qIndex + 1} de ${state.qTotal}`),
     h('strong', null, state.question.text),
@@ -23,7 +23,9 @@ function render() {
       h('a', { href: `/screen?code=${code}`, target: '_blank', style: 'color:var(--cream)' }, 'Abrir ecrã grande'),
       h('span', { class: 'muted' }, `${state.connected} / ${state.teamCount} equipas ligadas`)),
     qCard,
-    step ? h('button', { class: 'primary', onclick: () => act(step[0]) }, step[1]) : h('div', { class: 'card' }, h('strong', null, 'Jogo terminado.')),
+    step ? h('button', { class: 'primary', onclick: () => act(step[0]) }, step[1])
+      : h('div', { class: 'card' }, h('strong', null, state.phase === 'suspense' ? 'A preparar a resposta…' : 'Jogo terminado.')),
+    showPause ? h('button', { class: 'secondary', onclick: () => act('pause') }, state.paused ? 'Retomar jogo automático' : 'Pausar depois desta pergunta') : null,
     h('div', { class: 'error', role: 'alert' }, error),
     h('div', { class: 'card' }, h('strong', null, 'Equipas'),
       h('div', { class: 'roster' }, state.roster.map((t) => h('div', null,
