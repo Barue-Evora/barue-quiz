@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: barue-quiz
+    runtime: node
+    region: frankfurt
+    plan: free # change to starter before the first live night
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: ADMIN_PIN
+        sync: false

@@ -1,0 +1,7 @@
+{"title":"Quiz de teste","questions":[
+{"text":"Em que ano aconteceu a Revolução de 25 de Abril?","options":["1968","1974","1980","1986"],"correct":1,"timeLimit":20},
+{"text":"Quem escreveu Os Lusíadas?","options":["Fernando Pessoa","Eça de Queirós","Luís de Camões","José Saramago"],"correct":2,"timeLimit":20},
+{"text":"Que rio passa por Lisboa?","options":["Douro","Guadiana","Mondego","Tejo"],"correct":3,"timeLimit":20},
+{"text":"Qual é o maior planeta do Sistema Solar?","options":["Júpiter","Saturno","Terra","Marte"],"correct":0,"timeLimit":20},
+{"text":"Quantos jogadores de cada equipa começam em campo num jogo de futebol?","options":["9","10","11","12"],"correct":2,"timeLimit":20}
+]}
